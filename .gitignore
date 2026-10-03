@@ -1,0 +1,13 @@
+# 编译产物
+build/
+*.exe
+*.o
+*.obj
+
+# 测试下载的文件
+test_urls/downloads/
+*.meta
+
+# IDE / 编辑器本地文件
+.vs/
+*.user

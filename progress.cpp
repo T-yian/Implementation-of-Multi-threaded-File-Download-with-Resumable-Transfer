@@ -1,7 +1,7 @@
 #include "progress.h"
 
 #include "file_util.h"
-
+#include <windows.h>
 #include <cctype>
 #include <cstdio>
 #include <fstream>
@@ -173,8 +173,10 @@ bool ProgressTracker::load(const std::string &save_path, std::string &error)
 
 bool ProgressTracker::save(const std::string &save_path, std::string &error) const
 {
+    const std::string tmp = metaPath(save_path) + ".tmp";
+    std::ofstream out(tmp); // 改成原子替换  ① 先写临时文件
     // 直接由参数推出 .meta 路径（等价于 meta_path_，但让参数有意义）
-    std::ofstream out(metaPath(save_path));
+    // std::ofstream out(metaPath(save_path));
     if (!out)
     {
         error = "无法写入 meta 文件: " + metaPath(save_path);
@@ -195,6 +197,15 @@ bool ProgressTracker::save(const std::string &save_path, std::string &error) con
         out << "end=" << seg.end << "\n";
         out << "downloaded=" << seg.downloaded << "\n";
         out << "finished=" << (seg.finished ? 1 : 0) << "\n";
+    }
+
+    out.flush();
+    out.close(); // ② 完整落盘
+    // ③ 原子替换：同分区 rename，meta 永远要么旧完整要么新完整
+    if (!MoveFileExA(tmp.c_str(), metaPath(save_path).c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        error = "原子替换失败";
+        return false;
     }
     return true;
 }

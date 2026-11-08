@@ -50,7 +50,7 @@ namespace
         return s;
     }
 
-    std::string trim(const std::string &s)
+    std::string trim(const std::string &s) // 删除空格
     {
         size_t begin = 0;
         while (begin < s.size() && std::isspace(static_cast<unsigned char>(s[begin])))

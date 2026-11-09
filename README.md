@@ -1,6 +1,6 @@
 # 多线程文件下载及断点续传（Multi-Thread Downloader）
 
-基于 **C++17 + WinHTTP** 的命令行下载器，零第三方依赖。支持多线程分片下载、断点续传、实时进度显示，服务器不支持 Range 时自动降级为单线程。
+基于 **C++17 + libcurl** 的命令行下载器，主开发平台 Linux。支持多线程分片下载、断点续传、实时进度显示，服务器不支持 Range 时自动降级为单线程。（历史版本为 Windows + WinHTTP，见文末）
 
 ## 功能特性
 
@@ -10,71 +10,57 @@
 - **实时进度条**：`std::atomic` 累加字节数 + `std::mutex` 保护终端输出，`\r` 回车覆盖实现单行刷新
 - **安全降级**：服务器不支持 Range 时自动切换单线程整文件 GET；对谎报 Range 的服务器（返回字节数与请求区间不符）直接报错，绝不静默写坏文件
 
-## 构建与运行
+## 构建与运行（Linux）
 
-需要 Windows + MinGW-w64（`g++`）或任意 C++17 编译器，链接 `winhttp`。
+依赖 libcurl：
 
-```powershell
-# 一键构建（.ps1 内含完整参数）
-.\build.ps1
+    sudo apt install build-essential cmake libcurl4-openssl-dev
 
-# 或直接编译
-g++ -std=c++17 -O2 main.cpp http_client.cpp file_util.cpp progress.cpp progress_display.cpp download_manager.cpp -lwinhttp -lws2_32 -o build\downloader.exe
-```
+构建：
+
+    mkdir -p build && cd build
+    cmake .. && make -j$(nproc)
 
 使用：
 
-```powershell
-# 探测远程文件
-.\build\downloader.exe probe "<URL>"
+    ./downloader probe "<URL>"
+    ./downloader download "<URL>" "<保存路径>" 4    # 线程数可省略，默认 4
 
-# 4 线程下载（线程数可省略，默认 4）
-.\build\downloader.exe download "<URL>" "<保存路径>" 4
-
-# 中断后原样重跑 = 断点续传
-```
-
-`demo.bat` 提供一键演示（probe → 下载），`test_urls/` 内存放了一组稳定的测试 URL 与脚本，详见 [test_urls/README.md](test_urls/README.md)。
+中断后原样重跑同一条 download 命令 = 断点续传。
 
 ## 架构
 
-```
-main.cpp                  命令行入口，解析 probe / download 两个子命令
-  └── DownloadManager     下载调度：分片、线程管理、分支决策
-        ├── HttpClient    WinHTTP 封装：URL 解析、HEAD 探测、Range/整文件 GET
-        ├── FileUtil      本地文件：预分配、按偏移写入、存在性/大小查询
-        ├── ProgressTracker  .meta 进度文件的读写、匹配校验、线程安全更新
-        └── ProgressDisplay  终端进度条
-common.h                  Segment / FileInfo / DownloadConfig 三个数据结构
-```
+    main.cpp                  命令行入口，解析 probe / download 两个子命令
+      └── DownloadManager     下载调度：分片、线程管理、分支决策
+            ├── HttpClient    libcurl 封装：HEAD 探测、Range / 整文件 GET
+            ├── FileUtil      本地文件：预分配、按偏移写入、存在性/大小查询
+            ├── ProgressTracker   .meta 进度文件的读写、匹配校验、线程安全更新
+            └── ProgressDisplay   终端进度条
+    common.h                  Segment / FileInfo / DownloadConfig 三个数据结构
 
 一次完整下载的流程：
 
-```
-probe 探测大小与 Range 支持
-  → prepareLocalFile 预分配目标文件（已存在且大小正确则保留）
-  → 判断 supports_range
-      ├─ 否 → downloadWithoutRange：单线程整文件 GET，无 .meta
-      └─ 是 → prepareProgress：加载或新建 .meta
-             → downloadWithProgress：启动 min(线程数, 分片数) 个工作线程
-             → 全部完成后删除 .meta；失败则保留 .meta 供续传
-```
+    probe 探测大小与 Range 支持
+      → prepareLocalFile 预分配目标文件（已存在且大小正确则保留）
+      → 判断 supports_range
+          ├─ 否 → downloadWithoutRange：单线程整文件 GET，无 .meta
+          └─ 是 → prepareProgress：加载或新建 .meta
+                 → downloadWithProgress：启动 min(线程数, 分片数) 个工作线程
+                 → 全部完成后删除 .meta；失败则保留 .meta 供续传
 
 ## 断点续传设计
 
 `.meta` 为纯文本，与目标文件同目录同名加 `.meta` 后缀：
 
-```
-url=https://example.com/file.zip
-total_size=1000000
-thread_count=4
-segment_count=4
-[0]
-start=0
-end=249999
-downloaded=131072
-finished=0
-```
+    url=https://example.com/file.zip
+    total_size=1000000
+    thread_count=4
+    segment_count=4
+    [0]
+    start=0
+    end=249999
+    downloaded=131072
+    finished=0
 
 续传生效需同时满足：**URL、总大小、线程数、分片边界全部一致**，任一变化（换文件、改线程数、远程文件大小改变）都会将旧 `.meta` 作废并重新开始，避免把旧进度写到新任务上。
 
@@ -94,25 +80,17 @@ finished=0
 ## 限制与改进方向
 
 - 依赖 `Content-Length`，不支持分块编码（chunked）或动态长度的响应
-- 暂无网络超时与失败重试，弱网环境下需手动重跑（重跑即续传）
-- 不支持 HTTPS 证书校验的精细化自定义、代理、认证
-- 可扩展方向：指数退避重试、整文件 SHA256 校验、下载速度与 ETA 显示、配置文件替代命令行参数
+- 暂无失败重试与指数退避（弱网环境下手动重跑即续传）
+- 未处理服务器限流（HTTP 429）的自动退避重试
 
-## 调试
+## 历史版本（Windows / WinHTTP）
 
-`.vscode/` 内含 VS Code 的构建任务与 gdb 调试配置（MinGW）。**注意：项目路径不要包含中文**，MinGW gdb 无法处理 UTF-8 路径；`launch.json` 中 `miDebuggerPath` 需与自己的 gdb 安装路径一致。
+项目最初基于 WinHTTP 实现（零第三方依赖），2026-11 迁移至 Linux + libcurl。Windows 版构建脚本与演示脚本保留在仓库，仅作历史参考：
 
-## Linux 构建
+    # 需 Windows + MinGW-w64（g++），链接 winhttp / ws2_32
+    .\build.ps1                        # 一键构建
+    .\build\downloader.exe probe "<URL>"
+    demo.bat                           # 一键演示
+    test_urls/                         # 测试 URL 与脚本
 
-依赖：build-essential、cmake、libcurl4-openssl-dev
-
-    sudo apt install build-essential cmake libcurl4-openssl-dev
-
-构建与运行：
-
-    mkdir -p build && cd build
-    cmake .. && make -j$(nproc)
-    ./downloader download <url> <save_path> [thread_count]
-
-> 项目主开发平台已迁移至 Linux（libcurl 网络层）。build.ps1、demo.bat、
-> test_urls/ 下 .bat 为 Windows 历史遗留，不再维护。
+> 以上 Windows 脚本为历史遗留，不再维护。

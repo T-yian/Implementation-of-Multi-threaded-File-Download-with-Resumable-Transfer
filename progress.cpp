@@ -1,7 +1,7 @@
 #include "progress.h"
 
 #include "file_util.h"
-#include <windows.h>
+
 #include <cctype>
 #include <cstdio>
 #include <fstream>
@@ -47,6 +47,7 @@ void ProgressTracker::adopt(const ProgressTracker &other)
     total_size = other.total_size;
     thread_count = other.thread_count;
     segments = other.segments;
+    meta_path_ = other.meta_path_;
 }
 
 std::string ProgressTracker::metaPath(const std::string &save_path)
@@ -76,6 +77,7 @@ void ProgressTracker::initNew(const DownloadConfig &config, const FileInfo &info
     total_size = info.total_size;
     thread_count = config.thread_count;
     segments = segs;
+    meta_path_ = metaPath(config.save_path);
     for (auto &seg : segments)
     {
         seg.downloaded = 0;
@@ -91,6 +93,8 @@ bool ProgressTracker::load(const std::string &save_path, std::string &error)
         error = "无法打开 meta 文件";
         return false;
     }
+
+    meta_path_ = metaPath(save_path);
 
     segments.clear();
     Segment current;
@@ -201,8 +205,8 @@ bool ProgressTracker::save(const std::string &save_path, std::string &error) con
 
     out.flush();
     out.close(); // ② 完整落盘
-    // ③ 原子替换：同分区 rename，meta 永远要么旧完整要么新完整
-    if (!MoveFileExA(tmp.c_str(), metaPath(save_path).c_str(), MOVEFILE_REPLACE_EXISTING))
+    //  POSIX rename（同分区天然原子 + 天然覆盖目标文件）：
+    if (std::rename(tmp.c_str(), metaPath(save_path).c_str()) != 0)
     {
         error = "原子替换失败";
         return false;

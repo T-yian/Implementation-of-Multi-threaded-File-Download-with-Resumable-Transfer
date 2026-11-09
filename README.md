@@ -101,3 +101,18 @@ finished=0
 ## 调试
 
 `.vscode/` 内含 VS Code 的构建任务与 gdb 调试配置（MinGW）。**注意：项目路径不要包含中文**，MinGW gdb 无法处理 UTF-8 路径；`launch.json` 中 `miDebuggerPath` 需与自己的 gdb 安装路径一致。
+
+## Linux 构建
+
+依赖：build-essential、cmake、libcurl4-openssl-dev
+
+    sudo apt install build-essential cmake libcurl4-openssl-dev
+
+构建与运行：
+
+    mkdir -p build && cd build
+    cmake .. && make -j$(nproc)
+    ./downloader download <url> <save_path> [thread_count]
+
+> 项目主开发平台已迁移至 Linux（libcurl 网络层）。build.ps1、demo.bat、
+> test_urls/ 下 .bat 为 Windows 历史遗留，不再维护。
